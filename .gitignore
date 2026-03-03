@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+coverage/
+.DS_Store
+*.tsbuildinfo
+.idea/
+agent_docs/*
+docs/*
+.claude/

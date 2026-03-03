@@ -1,0 +1,51 @@
+{
+  "name": "uni-agent",
+  "version": "1.0.0",
+  "description": "한국 대학생을 위한 멀티 에이전트 학업 자동화 MCP 플러그인",
+  "type": "module",
+  "main": "dist/mcp/server.js",
+  "bin": {
+    "uni-agent": "bin/install.js"
+  },
+  "scripts": {
+    "build": "tsup src/mcp/server.ts --format cjs --dts --outDir dist",
+    "dev": "tsup src/mcp/server.ts --format cjs --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check src/",
+    "lint:fix": "biome check --write src/"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "@marp-team/marp-cli": "latest",
+    "@modelcontextprotocol/sdk": "latest",
+    "hnswlib-node": "latest",
+    "mammoth": "latest",
+    "pdf-parse": "latest",
+    "pptx2json": "latest",
+    "uuid": "latest",
+    "voyageai": "latest",
+    "hwp.js": "latest"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "latest",
+    "@types/node": "latest",
+    "@types/pdf-parse": "latest",
+    "@types/uuid": "latest",
+    "tsup": "latest",
+    "typescript": "^5.7.0",
+    "vitest": "latest"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "academic",
+    "ai",
+    "korea",
+    "university"
+  ],
+  "license": "MIT"
+}
