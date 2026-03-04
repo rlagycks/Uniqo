@@ -30,13 +30,14 @@ Claude Desktop (MCP over stdio)
             └── Context Manager   # Vector Store, 토큰 예산, 세션
 ```
 
-외부 연결: Semantic Scholar (필수) · RISS (국내 논문) · Tavily (선택, 웹 검색)
+외부 연결: Semantic Scholar (무료) · OpenAlex (무료, 한국어 필터) · CrossRef (무료)
 
 ## 기술 스택
 
 - **언어**: TypeScript / Node.js v20 LTS
 - **MCP**: `@modelcontextprotocol/sdk`
-- **LLM**: `@anthropic-ai/sdk` (Claude Desktop 환경에서 키 자동 주입)
+- **LLM**: MCP Sampling (`server.createMessage()`) — Claude Desktop에 위임, API 키 불필요
+- **임베딩**: `@xenova/transformers` (로컬 신경망, `multilingual-e5-base`) — API 키 불필요
 - **PPT**: `@marp-team/marp-cli` → PDF
 - **문서**: Pandoc (시스템 CLI) → DOCX / PDF
 - **벡터 DB**: `hnswlib-node` (로컬)
@@ -81,10 +82,11 @@ templates/               # 한국 대학 PPT·보고서 양식
 | `agent_docs/context.md` | 토큰 예산, 청킹 전략, RAG 설계 |
 | `agent_docs/reference.md` | 파일 파싱, 레퍼런스 저장 구조, 인용 추적 |
 | `agent_docs/workflow.md` | DAG 실행, 체크포인트 생명주기 |
-| `uni-agent-planning.md` | 전체 기획 문서 (Why + 의사결정 로그) |
+| `docs/기획.md` | 전체 기획 문서 (Why + 의사결정 로그) |
 
 ## 현재 상태
 
 - [x] Phase 1: MCP Hello World → PPT → 보고서 → 설치 마법사 → v0.1.0
 - [x] Phase 2: Research Agent · Context Manager · 체크포인트
 - [x] Phase 3: 플러그인 SDK · HWP 지원 · v1.0.0
+- [ ] Phase 4: MCP Sampling 전환 · 외부 API 무의존 · 로컬 임베딩 교체
