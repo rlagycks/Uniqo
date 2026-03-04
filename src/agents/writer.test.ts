@@ -1,15 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { WriterInput, ResearchReport, PaperSummary } from '../types/index.js';
 
-// vi.hoisted로 mock 함수를 팩토리 내에서도 참조 가능하게 선언
-const { mockCreate } = vi.hoisted(() => ({ mockCreate: vi.fn() }));
-
-vi.mock('@anthropic-ai/sdk', () => ({
-  // class constructor를 new로 호출하므로 function 키워드 필수
-  default: vi.fn().mockImplementation(function () {
-    return { messages: { create: mockCreate } };
-  }),
-}));
+const mockLlm = vi.fn();
 
 vi.mock('../context/manager.js', () => ({
   contextManager: {
@@ -57,33 +49,27 @@ function makeResearchReport(papers: PaperSummary[] = [makePaper()]): ResearchRep
   };
 }
 
-function mockTextResponse(text: string) {
-  return { content: [{ type: 'text', text }] };
-}
-
 describe('WriterAgent — designStructure slideCount 반영', () => {
   beforeEach(() => {
-    mockCreate.mockReset();
+    mockLlm.mockReset();
   });
 
   it('preferences.slideCount=12이면 프롬프트에 "정확히 12개 섹션" 지시가 포함된다', async () => {
     // extractKeyPoints
-    mockCreate.mockResolvedValueOnce(mockTextResponse('["논점1", "논점2"]'));
+    mockLlm.mockResolvedValueOnce('["논점1", "논점2"]');
     // designStructure — 12개 섹션 반환
-    mockCreate.mockResolvedValueOnce(
-      mockTextResponse(
-        '["표지","목차","서론","배경1","배경2","본론1","본론2","본론3","사례","비교","결론","참고문헌"]',
-      ),
+    mockLlm.mockResolvedValueOnce(
+      '["표지","목차","서론","배경1","배경2","본론1","본론2","본론3","사례","비교","결론","참고문헌"]',
     );
     // writeSections (12회)
     for (let i = 0; i < 12; i++) {
-      mockCreate.mockResolvedValueOnce(mockTextResponse('섹션 내용'));
+      mockLlm.mockResolvedValueOnce('섹션 내용');
     }
     // selfReview
-    mockCreate.mockResolvedValueOnce(mockTextResponse('{ "score": 0.9, "suggestions": [] }'));
+    mockLlm.mockResolvedValueOnce('{ "score": 0.9, "suggestions": [] }');
 
     const { WriterAgent } = await import('./writer.js');
-    const agent = new WriterAgent();
+    const agent = new WriterAgent(mockLlm);
 
     const input: WriterInput = {
       researchReport: makeResearchReport(),
@@ -95,23 +81,23 @@ describe('WriterAgent — designStructure slideCount 반영', () => {
 
     const draft = await agent.run(input);
 
-    // 두 번째 LLM 호출이 designStructure
-    const designCall = mockCreate.mock.calls[1];
-    const prompt = designCall?.[0]?.messages?.[0]?.content as string;
+    // 두 번째 LLM 호출이 designStructure (첫 번째는 extractKeyPoints)
+    const designCall = mockLlm.mock.calls[1];
+    const prompt = designCall?.[0] as string;
     expect(prompt).toContain('12');
     expect(draft.structure.length).toBe(12);
   });
 
   it('preferences.style="academic"이면 프롬프트에 논문체 지시가 포함된다', async () => {
-    mockCreate.mockResolvedValueOnce(mockTextResponse('["논점1"]'));
-    mockCreate.mockResolvedValueOnce(mockTextResponse('["서론","본론","결론"]'));
+    mockLlm.mockResolvedValueOnce('["논점1"]');
+    mockLlm.mockResolvedValueOnce('["서론","본론","결론"]');
     for (let i = 0; i < 3; i++) {
-      mockCreate.mockResolvedValueOnce(mockTextResponse('내용'));
+      mockLlm.mockResolvedValueOnce('내용');
     }
-    mockCreate.mockResolvedValueOnce(mockTextResponse('{ "score": 0.8, "suggestions": [] }'));
+    mockLlm.mockResolvedValueOnce('{ "score": 0.8, "suggestions": [] }');
 
     const { WriterAgent } = await import('./writer.js');
-    const agent = new WriterAgent();
+    const agent = new WriterAgent(mockLlm);
 
     const input: WriterInput = {
       researchReport: makeResearchReport(),
@@ -123,21 +109,21 @@ describe('WriterAgent — designStructure slideCount 반영', () => {
 
     await agent.run(input);
 
-    const designCall = mockCreate.mock.calls[1];
-    const prompt = designCall?.[0]?.messages?.[0]?.content as string;
+    const designCall = mockLlm.mock.calls[1];
+    const prompt = designCall?.[0] as string;
     expect(prompt).toContain('논문체');
   });
 
   it('preferences.style="minimal"이면 프롬프트에 핵심 포인트 간결 지시가 포함된다', async () => {
-    mockCreate.mockResolvedValueOnce(mockTextResponse('[]'));
-    mockCreate.mockResolvedValueOnce(mockTextResponse('["개요","핵심","마무리"]'));
+    mockLlm.mockResolvedValueOnce('[]');
+    mockLlm.mockResolvedValueOnce('["개요","핵심","마무리"]');
     for (let i = 0; i < 3; i++) {
-      mockCreate.mockResolvedValueOnce(mockTextResponse('내용'));
+      mockLlm.mockResolvedValueOnce('내용');
     }
-    mockCreate.mockResolvedValueOnce(mockTextResponse('{ "score": 0.8, "suggestions": [] }'));
+    mockLlm.mockResolvedValueOnce('{ "score": 0.8, "suggestions": [] }');
 
     const { WriterAgent } = await import('./writer.js');
-    const agent = new WriterAgent();
+    const agent = new WriterAgent(mockLlm);
 
     const input: WriterInput = {
       researchReport: makeResearchReport(),
@@ -149,21 +135,21 @@ describe('WriterAgent — designStructure slideCount 반영', () => {
 
     await agent.run(input);
 
-    const designCall = mockCreate.mock.calls[1];
-    const prompt = designCall?.[0]?.messages?.[0]?.content as string;
+    const designCall = mockLlm.mock.calls[1];
+    const prompt = designCall?.[0] as string;
     expect(prompt).toContain('간결');
   });
 
   it('preferences 없으면 "5~10개 사이" 기본 지시가 적용된다', async () => {
-    mockCreate.mockResolvedValueOnce(mockTextResponse('[]'));
-    mockCreate.mockResolvedValueOnce(mockTextResponse('["서론","본론","결론"]'));
+    mockLlm.mockResolvedValueOnce('[]');
+    mockLlm.mockResolvedValueOnce('["서론","본론","결론"]');
     for (let i = 0; i < 3; i++) {
-      mockCreate.mockResolvedValueOnce(mockTextResponse('내용'));
+      mockLlm.mockResolvedValueOnce('내용');
     }
-    mockCreate.mockResolvedValueOnce(mockTextResponse('{ "score": 0.8, "suggestions": [] }'));
+    mockLlm.mockResolvedValueOnce('{ "score": 0.8, "suggestions": [] }');
 
     const { WriterAgent } = await import('./writer.js');
-    const agent = new WriterAgent();
+    const agent = new WriterAgent(mockLlm);
 
     const input: WriterInput = {
       researchReport: makeResearchReport(),
@@ -174,8 +160,8 @@ describe('WriterAgent — designStructure slideCount 반영', () => {
 
     await agent.run(input);
 
-    const designCall = mockCreate.mock.calls[1];
-    const prompt = designCall?.[0]?.messages?.[0]?.content as string;
+    const designCall = mockLlm.mock.calls[1];
+    const prompt = designCall?.[0] as string;
     expect(prompt).toContain('5~10개');
   });
 });
