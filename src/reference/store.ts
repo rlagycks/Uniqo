@@ -6,9 +6,8 @@ import type {
   ReferenceInput,
   ReferenceSource,
   SemanticScholarPaper,
-  RissPaper,
-  DbpiaPaper,
-  TavilyResult,
+  OpenAlexWork,
+  CrossRefWork,
 } from '../types/index.js';
 import { referenceParser } from './parser.js';
 import { generateCitationKey } from './citation.js';
@@ -133,12 +132,9 @@ export class ReferenceStore {
   }
 
   async addFromApiResult(
-    paper: SemanticScholarPaper | RissPaper | DbpiaPaper | TavilyResult,
+    paper: SemanticScholarPaper | OpenAlexWork | CrossRefWork | { title: string; url?: string; content?: string },
   ): Promise<ReferenceEntry> {
     this.load();
-
-    // Semantic Scholar 결과인지 RISS 결과인지 판별
-    const isSemanticScholar = 'paperId' in paper;
 
     let title: string;
     let authors: string[];
@@ -148,7 +144,7 @@ export class ReferenceStore {
     let source: ReferenceSource;
     let abstract: string | undefined;
 
-    if (isSemanticScholar) {
+    if ('paperId' in paper) {
       const ss = paper as SemanticScholarPaper;
       title = ss.title;
       authors = ss.authors.map((a) => a.name);
@@ -156,30 +152,39 @@ export class ReferenceStore {
       doi = ss.externalIds?.DOI;
       source = 'semantic_scholar';
       abstract = ss.abstract;
-    } else if ('controlNo' in paper) {
-      const riss = paper as RissPaper;
-      title = riss.title;
-      authors = riss.creator ? [riss.creator] : [];
-      year = parseInt(riss.pubtYear, 10) || new Date().getFullYear();
-      url = riss.url;
-      source = 'riss';
-      abstract = riss.abstract;
-    } else if ('publicationId' in paper) {
-      const dbpia = paper as DbpiaPaper;
-      title = dbpia.title;
-      authors = dbpia.author ? [dbpia.author] : [];
-      year = parseInt(dbpia.publishYear, 10) || new Date().getFullYear();
-      url = dbpia.url;
-      source = 'dbpia';
-      abstract = dbpia.abstract;
+    } else if ('authorships' in paper) {
+      const oa = paper as OpenAlexWork;
+      title = oa.title;
+      authors = oa.authorships.map((a) => a.author.display_name);
+      year = oa.publication_year ?? new Date().getFullYear();
+      doi = oa.doi?.replace('https://doi.org/', '');
+      url = oa.doi ? `https://doi.org/${doi}` : oa.id;
+      source = 'openalex';
+      if (oa.abstract_inverted_index) {
+        const positions: Array<[number, string]> = [];
+        for (const [word, idxs] of Object.entries(oa.abstract_inverted_index)) {
+          for (const idx of idxs) positions.push([idx, word]);
+        }
+        abstract = positions.sort((a, b) => a[0] - b[0]).map((p) => p[1]).join(' ');
+      }
+    } else if ('DOI' in paper) {
+      const cr = paper as CrossRefWork;
+      title = Array.isArray(cr.title) ? (cr.title[0] ?? '') : (cr.title as string);
+      authors = (cr.author ?? []).map((a) => `${a.given ?? ''} ${a.family ?? ''}`.trim());
+      year = cr['published-print']?.['date-parts']?.[0]?.[0] ?? new Date().getFullYear();
+      doi = cr.DOI;
+      url = `https://doi.org/${cr.DOI}`;
+      source = 'crossref';
+      abstract = cr.abstract;
     } else {
-      const tav = paper as TavilyResult;
-      title = tav.title;
+      // Generic fallback (e.g. plugin result)
+      const gen = paper as { title: string; url?: string; content?: string };
+      title = gen.title;
       authors = [];
-      year = tav.published_date ? parseInt(tav.published_date.slice(0, 4), 10) : new Date().getFullYear();
-      url = tav.url;
-      source = 'tavily';
-      abstract = tav.content;
+      year = new Date().getFullYear();
+      url = gen.url;
+      source = 'url';
+      abstract = gen.content;
     }
 
     const citationKey = generateCitationKey(
