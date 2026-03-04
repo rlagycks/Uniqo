@@ -1,6 +1,6 @@
 {
   "name": "uni-agent",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "한국 대학생을 위한 멀티 에이전트 학업 자동화 MCP 플러그인",
   "type": "module",
   "main": "dist/mcp/server.js",
@@ -16,15 +16,14 @@
     "lint:fix": "biome check --write src/"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "latest",
     "@marp-team/marp-cli": "latest",
     "@modelcontextprotocol/sdk": "latest",
+    "@xenova/transformers": "latest",
     "hnswlib-node": "latest",
     "mammoth": "latest",
     "pdf-parse": "latest",
     "pptx2json": "latest",
     "uuid": "latest",
-    "voyageai": "latest",
     "hwp.js": "latest"
   },
   "devDependencies": {
