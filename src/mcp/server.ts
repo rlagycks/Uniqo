@@ -2,13 +2,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
+import { createSamplingCaller } from './sampling.js';
 import { OrchestratorAgent } from '../agents/orchestrator.js';
 import { referenceStore } from '../reference/store.js';
 import { checkpointManager } from '../workflow/checkpoint.js';
 
 const server = new McpServer({
   name: 'uni-agent',
-  version: '0.1.0',
+  version: '2.0.0',
 });
 
 // ─── run_task ──────────────────────────────────────────────────
@@ -38,7 +39,8 @@ server.tool(
   },
   async ({ intent, session_id, attachments, preferences }) => {
     const sessionId = session_id ?? uuidv4();
-    const agent = new OrchestratorAgent();
+    const llm = createSamplingCaller(server);
+    const agent = new OrchestratorAgent(llm);
 
     try {
       const result = await agent.run({
@@ -142,7 +144,8 @@ server.tool(
       };
     }
 
-    const agent = new OrchestratorAgent();
+    const llm = createSamplingCaller(server);
+    const agent = new OrchestratorAgent(llm);
     try {
       const result = await agent.run({
         intent: '',
@@ -203,7 +206,7 @@ server.tool(
   '등록된 참고문헌 목록을 조회합니다.',
   {
     source: z
-      .enum(['semantic_scholar', 'riss', 'dbpia', 'tavily', 'pdf', 'pptx', 'docx', 'url', 'doi', 'image'])
+      .enum(['semantic_scholar', 'openalex', 'crossref', 'pdf', 'pptx', 'docx', 'url', 'doi', 'image'])
       .optional()
       .describe('출처 필터'),
     year: z.number().optional().describe('출판 연도 필터'),
