@@ -48,7 +48,7 @@ function isPandocInstalled() {
 async function install() {
   console.log('');
   console.log('╔══════════════════════════════════╗');
-  console.log('║   🎓 uni-agent v1.0.0            ║');
+  console.log('║   🎓 uni-agent v2.0.0            ║');
   console.log('║   한국 대학생 학업 자동화 MCP     ║');
   console.log('╚══════════════════════════════════╝');
   console.log('');
@@ -101,12 +101,7 @@ async function install() {
   config.mcpServers['uni-agent'] = {
     command: 'node',
     args: [serverPath],
-    env: {
-      RISS_API_KEY:   process.env['RISS_API_KEY']   ?? '',
-      DBPIA_API_KEY:  process.env['DBPIA_API_KEY']  ?? '',
-      TAVILY_API_KEY: process.env['TAVILY_API_KEY'] ?? '',
-      VOYAGE_API_KEY: process.env['VOYAGE_API_KEY'] ?? '',
-    },
+    env: {},
   };
 
   // 5. Pandoc 확인
@@ -164,6 +159,9 @@ async function install() {
   console.log('💡 사용 예시:');
   console.log('   "AI 윤리 발표 12장 만들어줘"');
   console.log('   "기후변화 보고서 작성해줘"');
+  console.log('');
+  console.log('ℹ️  첫 실행 시 임베딩 모델(~280MB)을 자동 다운로드합니다.');
+  console.log('   이후에는 로컬 캐시를 사용하므로 추가 다운로드가 없습니다.');
   console.log('━'.repeat(40));
   console.log('');
 }
