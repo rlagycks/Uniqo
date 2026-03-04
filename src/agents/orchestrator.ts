@@ -1,7 +1,7 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuidv4 } from 'uuid';
 import * as path from 'node:path';
 import { pluginRegistry } from '../plugins/plugin.js';
+import type { LLMCaller } from '../mcp/sampling.js';
 import type {
   OrchestratorInput,
   TaskResult,
@@ -33,12 +33,9 @@ const MIN_PAPERS = 3;
 const MAX_AMBIGUITY_SCORE = 0.7;
 
 export class OrchestratorAgent {
-  private client: Anthropic;
   private progress: StepLog[] = [];
 
-  constructor() {
-    this.client = new Anthropic();
-  }
+  constructor(private llm: LLMCaller) {}
 
   async run(input: OrchestratorInput): Promise<TaskResult> {
     this.progress = [];
@@ -88,12 +85,10 @@ export class OrchestratorAgent {
               });
 
               if (result.success && result.text) {
-                // TavilyResult 형태로 wrapping해 레퍼런스 등록
                 await referenceStore.addFromApiResult({
                   title: result.metadata?.title ?? path.basename(filePath),
                   url: `file://${filePath}`,
                   content: result.text,
-                  score: 1.0,
                 });
                 this.log('orchestrator', 'parse_attachment', `플러그인 [${plugin.name}] 처리: ${filePath}`);
               } else {
@@ -104,7 +99,7 @@ export class OrchestratorAgent {
               await referenceStore.add({ type: 'file', filePath });
               this.log('orchestrator', 'parse_attachment', `첨부파일 등록: ${filePath}`);
             }
-          } catch (err) {
+          } catch {
             this.log('orchestrator', 'parse_attachment', `첨부파일 오류: ${filePath}`);
           }
         }
@@ -195,7 +190,7 @@ export class OrchestratorAgent {
               };
             }
 
-            const agent = new ResearchAgent();
+            const agent = new ResearchAgent(this.llm);
             researchReport = await agent.run({
               topic: input.intent,
               outputType,
@@ -238,7 +233,7 @@ export class OrchestratorAgent {
               throw new Error('ResearchReport가 없습니다');
             }
 
-            const agent = new WriterAgent();
+            const agent = new WriterAgent(this.llm);
             draft = await agent.run({
               researchReport,
               outputType,
@@ -358,13 +353,7 @@ confidence가 낮을수록 모호한 요청입니다.
 `.trim();
 
     try {
-      const response = await this.client.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 128,
-        messages: [{ role: 'user', content: prompt }],
-      });
-
-      const text = response.content[0]?.type === 'text' ? response.content[0].text : '{}';
+      const text = await this.llm(prompt, 128);
       const match = text.match(/\{[\s\S]*\}/);
       if (match) {
         const parsed = JSON.parse(match[0]) as { outputType: OutputType; confidence: number };
@@ -396,5 +385,3 @@ confidence가 낮을수록 모호한 요청입니다.
     this.progress.push(buildStepLog(agent as Parameters<typeof buildStepLog>[0], step, message));
   }
 }
-
-export const orchestratorAgent = new OrchestratorAgent();

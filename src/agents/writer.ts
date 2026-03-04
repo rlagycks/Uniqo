@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import type { LLMCaller } from '../mcp/sampling.js';
 import type {
   WriterInput,
   Draft,
@@ -15,11 +15,7 @@ const MIN_SELF_REVIEW_SCORE = 0.7;
 const MAX_REVIEW_ITERATIONS = 2;
 
 export class WriterAgent {
-  private client: Anthropic;
-
-  constructor() {
-    this.client = new Anthropic();
-  }
+  constructor(private llm: LLMCaller) {}
 
   async run(input: WriterInput): Promise<Draft> {
     // 1. 주요 논점 추출
@@ -94,13 +90,7 @@ ${abstracts}
 JSON 배열로 응답: ["논점1", "논점2", ...]
 `.trim();
 
-    const response = await this.client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 512,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const text = response.content[0]?.type === 'text' ? response.content[0].text : '[]';
+    const text = await this.llm(prompt, 512);
     try {
       const match = text.match(/\[[\s\S]*\]/);
       return match ? (JSON.parse(match[0]) as string[]) : [];
@@ -148,13 +138,7 @@ ${slideCountInstruction}
 예시: ["서론", "AI의 정의와 역사", "윤리적 쟁점", "사례 분석", "결론", "참고문헌"]
 `.trim();
 
-    const response = await this.client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 512,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const text = response.content[0]?.type === 'text' ? response.content[0].text : '[]';
+    const text = await this.llm(prompt, 512);
     try {
       const match = text.match(/\[[\s\S]*\]/);
       return match ? (JSON.parse(match[0]) as string[]) : ['서론', '본론', '결론'];
@@ -221,13 +205,7 @@ ${refContext || '(없음)'}
 인용이 있으면 (저자, 연도) 형식으로 표기하세요.
 `.trim();
 
-      const response = await this.client.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: prompt }],
-      });
-
-      const content = response.content[0]?.type === 'text' ? response.content[0].text : '';
+      const content = await this.llm(prompt, 1024);
 
       // 사용된 refId 표시
       const usedRefs = refEntries
@@ -329,13 +307,7 @@ ${preview}
 JSON으로 응답: { "score": 0.8, "suggestions": ["제안1", "제안2"] }
 `.trim();
 
-    const response = await this.client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 512,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const text = response.content[0]?.type === 'text' ? response.content[0].text : '{}';
+    const text = await this.llm(prompt, 512);
     try {
       const match = text.match(/\{[\s\S]*\}/);
       if (match) {
@@ -373,13 +345,8 @@ ${content.slice(0, 4000)}
 수정된 전체 초안을 반환하세요.
 `.trim();
 
-    const response = await this.client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    return response.content[0]?.type === 'text' ? response.content[0].text : content;
+    const text = await this.llm(prompt, 4096);
+    return text || content;
   }
 
   private extractTitle(intent: string): string {
@@ -388,5 +355,3 @@ ${content.slice(0, 4000)}
     return cleaned.length <= 30 ? cleaned : cleaned.slice(0, 30) + '...';
   }
 }
-
-export const writerAgent = new WriterAgent();
