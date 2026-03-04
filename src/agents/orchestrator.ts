@@ -354,7 +354,7 @@ confidence가 낮을수록 모호한 요청입니다.
 
     try {
       const text = await this.llm(prompt, 128);
-      const match = text.match(/\{[\s\S]*\}/);
+      const match = text.match(/\{[^{}]*\}/);
       if (match) {
         const parsed = JSON.parse(match[0]) as { outputType: OutputType; confidence: number };
         return {
