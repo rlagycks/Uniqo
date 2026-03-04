@@ -1,7 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import Anthropic from '@anthropic-ai/sdk';
 import type { Chunk, SessionState, StepLog, UserProfile } from '../types/index.js';
 import { vectorStore } from './vector-store.js';
 
@@ -17,6 +16,7 @@ const TOKEN_BUDGET = {
 } as const;
 
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1시간
+const EMBEDDING_DIM = 768;
 
 interface EmbeddingCacheEntry {
   embedding: number[];
@@ -32,17 +32,12 @@ interface SearchCache {
 }
 
 export class ContextManager {
-  private client: Anthropic;
   private embeddingCache: EmbeddingCache = {};
   private searchCache: SearchCache = {};
   private workingChunks: Chunk[] = [];
   private sessionCache: Map<string, SessionState> = new Map();
-  private voyageClient: unknown = null;
-  private readonly VOYAGE_DIM = 1024;
-  private readonly LOCAL_DIM = 1536;
 
   constructor() {
-    this.client = new Anthropic();
     this.loadEmbeddingCache();
     fs.mkdirSync(SESSIONS_DIR, { recursive: true });
   }
@@ -53,55 +48,41 @@ export class ContextManager {
     const cached = this.embeddingCache[text];
     if (cached) return cached.embedding;
 
-    // Claude API는 현재 embedding 엔드포인트를 공개하지 않으므로
-    // 텍스트 해시 기반 더미 벡터를 생성한다 (Phase 2에서 실제 임베딩으로 교체)
-    const embedding = await this.computeEmbedding(text);
+    const embedding = await this.computeLocalEmbedding(text);
 
     this.embeddingCache[text] = { embedding, createdAt: Date.now() };
     this.persistEmbeddingCache();
     return embedding;
   }
 
-  private async computeEmbedding(text: string): Promise<number[]> {
-    if (process.env['VOYAGE_API_KEY']) {
-      try { return await this.computeVoyageEmbedding(text); } catch { /* fallback */ }
+  private async computeLocalEmbedding(text: string): Promise<number[]> {
+    try {
+      const { pipeline } = await import('@xenova/transformers');
+      const embedder = await pipeline('feature-extraction', 'Xenova/multilingual-e5-base');
+      const output = await embedder(text, { pooling: 'mean', normalize: true });
+      return Array.from(output.data) as number[];
+    } catch {
+      // fallback: TF 기반 더미 벡터
+      return this.computeFallbackEmbedding(text);
     }
-    return this.computeLocalEmbedding(text);
   }
 
-  private async computeVoyageEmbedding(text: string): Promise<number[]> {
-    if (!this.voyageClient) {
-      const { VoyageAIClient } = await import('voyageai');
-      this.voyageClient = new VoyageAIClient({ apiKey: process.env['VOYAGE_API_KEY']! });
-    }
-    const client = this.voyageClient as { embed(args: object): Promise<{ embeddings?: number[][] }> };
-    const res = await client.embed({ input: [text], model: 'voyage-multilingual-2' });
-    const emb = res.embeddings?.[0];
-    if (!emb?.length) throw new Error('empty embedding');
-    return emb;
-  }
-
-  private computeLocalEmbedding(text: string): number[] {
-    const dim = this.LOCAL_DIM;
-    const vec = new Array<number>(dim).fill(0);
-
-    // 간단한 TF 기반 특성 추출 (로컬, API 불필요)
+  private computeFallbackEmbedding(text: string): number[] {
+    const vec = new Array<number>(EMBEDDING_DIM).fill(0);
     const words = text.toLowerCase().split(/\s+/);
     for (const word of words) {
       for (let i = 0; i < word.length; i++) {
         const charCode = word.charCodeAt(i);
-        const idx = (charCode * 31 + i * 17) % dim;
+        const idx = (charCode * 31 + i * 17) % EMBEDDING_DIM;
         vec[idx] = (vec[idx] ?? 0) + 1 / words.length;
       }
     }
-
-    // L2 정규화
     const norm = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));
     return norm > 0 ? vec.map((v) => v / norm) : vec;
   }
 
   getEmbeddingDimension(): number {
-    return process.env['VOYAGE_API_KEY'] ? this.VOYAGE_DIM : this.LOCAL_DIM;
+    return EMBEDDING_DIM;
   }
 
   // ─── 청크 검색 ───────────────────────────────────────────
@@ -117,7 +98,6 @@ export class ContextManager {
     const results = await vectorStore.search(queryEmbedding, topK);
     const chunks = results.map((r) => r.chunk);
 
-    // Working memory 업데이트 (용량 제한)
     this.workingChunks = chunks;
 
     this.searchCache[cacheKey] = {
