@@ -11,6 +11,7 @@ const server = new McpServer({
   name: 'uni-agent',
   version: '2.0.0',
 });
+const llm = createSamplingCaller(server);
 
 // ─── run_task ──────────────────────────────────────────────────
 
@@ -39,7 +40,6 @@ server.tool(
   },
   async ({ intent, session_id, attachments, preferences }) => {
     const sessionId = session_id ?? uuidv4();
-    const llm = createSamplingCaller(server);
     const agent = new OrchestratorAgent(llm);
 
     try {
@@ -144,7 +144,6 @@ server.tool(
       };
     }
 
-    const llm = createSamplingCaller(server);
     const agent = new OrchestratorAgent(llm);
     try {
       const result = await agent.run({

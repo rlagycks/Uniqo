@@ -14,6 +14,12 @@ import { buildCitationRefs, formatInlineCitation } from '../reference/citation.j
 const MIN_SELF_REVIEW_SCORE = 0.7;
 const MAX_REVIEW_ITERATIONS = 2;
 
+const STYLE_INSTRUCTIONS: Record<NonNullable<UserPreferences['style']>, string> = {
+  academic: '논문체(-이다, -한다)로 작성하세요.',
+  detailed: '상세하게 근거와 예시를 포함하세요.',
+  minimal: '핵심 포인트만 간결하게 작성하세요.',
+};
+
 export class WriterAgent {
   constructor(private llm: LLMCaller) {}
 
@@ -117,13 +123,7 @@ JSON 배열로 응답: ["논점1", "논점2", ...]
       ? `정확히 ${preferences.slideCount}개 섹션으로 구성하세요.`
       : '섹션은 5~10개 사이로 구성하세요.';
 
-    const styleInstruction = preferences?.style
-      ? {
-          academic: '논문체(-이다, -한다)로 작성하세요.',
-          detailed: '상세하게 근거와 예시를 포함하세요.',
-          minimal: '핵심 포인트만 간결하게 구성하세요.',
-        }[preferences.style]
-      : '';
+    const styleInstruction = preferences?.style ? STYLE_INSTRUCTIONS[preferences.style] : '';
 
     const prompt = `
 요청: "${intent}"
@@ -156,13 +156,7 @@ ${slideCountInstruction}
     const sections: Section[] = [];
     const refIds: string[] = papers.map((p) => p.refId);
 
-    const styleInstruction = preferences?.style
-      ? {
-          academic: '논문체(-이다, -한다)로 작성하세요.',
-          detailed: '상세하게 근거와 예시를 포함하세요.',
-          minimal: '핵심 포인트만 간결하게 작성하세요.',
-        }[preferences.style]
-      : '';
+    const styleInstruction = preferences?.style ? STYLE_INSTRUCTIONS[preferences.style] : '';
 
     for (const sectionTitle of structure) {
       // 관련 청크 검색
@@ -250,16 +244,18 @@ footer: "uni-agent | ${new Date().toLocaleDateString('ko-KR')}"
 ---
 `;
 
-    const body = sections
-      .map((s) => {
-        if (s.title === '참고문헌') {
-          return `## ${s.title}\n\n${s.content}`;
-        }
-        return `## ${s.title}\n\n${s.content}`;
-      })
+    const mainSections = sections.filter((s) => s.title !== '참고문헌');
+    const refSection = sections.find((s) => s.title === '참고문헌');
+
+    const body = mainSections
+      .map((s) => `## ${s.title}\n\n${s.content}`)
       .join('\n\n---\n\n');
 
-    return header + body;
+    const refPart = refSection
+      ? `\n\n---\n\n## ${refSection.title}\n\n${refSection.content}`
+      : '';
+
+    return header + body + refPart;
   }
 
   private assembleReport(title: string, sections: Section[]): string {
@@ -290,7 +286,7 @@ lang: ko
     intent: string,
     outputType: OutputType,
   ): Promise<{ score: number; suggestions: string[] }> {
-    const preview = content.slice(0, 3000);
+    const preview = content.slice(0, 6000);
 
     const prompt = `
 요청: "${intent}"
@@ -340,18 +336,20 @@ ${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
 형식: ${outputType}
 
 초안:
-${content.slice(0, 4000)}
+${content.slice(0, 8000)}
 
-수정된 전체 초안을 반환하세요.
+개선 사항을 반영하여 수정된 전체 초안을 반환하세요.
 `.trim();
 
-    const text = await this.llm(prompt, 4096);
+    const text = await this.llm(prompt, 8192);
     return text || content;
   }
 
   private extractTitle(intent: string): string {
-    // 간단한 제목 추출: 첫 20자 또는 첫 문장
-    const cleaned = intent.replace(/['"]/g, '').trim();
+    const cleaned = intent
+      .replace(/['"]/g, '')
+      .replace(/\s*(만들어\s*줘|작성해\s*줘|써\s*줘|해\s*줘|생성해\s*줘|준비해\s*줘|정리해\s*줘)$/u, '')
+      .trim();
     return cleaned.length <= 30 ? cleaned : cleaned.slice(0, 30) + '...';
   }
 }
