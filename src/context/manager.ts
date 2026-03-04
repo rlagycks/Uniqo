@@ -36,6 +36,7 @@ export class ContextManager {
   private searchCache: SearchCache = {};
   private workingChunks: Chunk[] = [];
   private sessionCache: Map<string, SessionState> = new Map();
+  private embedderPromise: Promise<(text: string, options: object) => Promise<{ data: Float32Array }>> | null = null;
 
   constructor() {
     this.loadEmbeddingCache();
@@ -55,10 +56,18 @@ export class ContextManager {
     return embedding;
   }
 
+  private getEmbedder() {
+    if (!this.embedderPromise) {
+      this.embedderPromise = import('@xenova/transformers').then(({ pipeline }) =>
+        pipeline('feature-extraction', 'Xenova/multilingual-e5-base'),
+      );
+    }
+    return this.embedderPromise;
+  }
+
   private async computeLocalEmbedding(text: string): Promise<number[]> {
     try {
-      const { pipeline } = await import('@xenova/transformers');
-      const embedder = await pipeline('feature-extraction', 'Xenova/multilingual-e5-base');
+      const embedder = await this.getEmbedder();
       const output = await embedder(text, { pooling: 'mean', normalize: true });
       return Array.from(output.data) as number[];
     } catch {

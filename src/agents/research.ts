@@ -29,11 +29,16 @@ export class ResearchAgent {
     let iteration = 0;
     let refinementHint = input.refinementHint;
 
+    let lastTop: Array<{ paper: AnyPaper; score: number }> = [];
+    let lastKeywords: string[] = [];
+    let lastTotalFound = 0;
+
     while (iteration < MAX_ITERATIONS) {
       iteration++;
 
       // 1. 검색어 생성
       const keywords = await this.generateKeywords(input.topic, input.outputType, refinementHint);
+      lastKeywords = keywords;
 
       // 2. 병렬 검색 (3-way)
       const [ssResults, openAlexResults, crossRefResults] = await Promise.allSettled([
@@ -47,23 +52,24 @@ export class ResearchAgent {
         ...(openAlexResults.status === 'fulfilled' ? openAlexResults.value : []),
         ...(crossRefResults.status === 'fulfilled' ? crossRefResults.value : []),
       ];
+      lastTotalFound = rawPapers.length;
 
       // 3. 관련성 채점
       const scored = await this.scorePapers(rawPapers, input.topic);
 
       // 4. 중복 제거 + 상위 선별
       const unique = this.deduplicatePapers(scored);
-      const top = unique.slice(0, 10);
+      lastTop = unique.slice(0, 10);
 
       // 5. 갭 분석
-      const gaps = await this.analyzeGaps(top, input.topic);
+      const gaps = await this.analyzeGaps(lastTop.map((s) => s.paper), input.topic);
 
       // 6. 신뢰도 계산
-      const confidence = this.calculateConfidence(top, gaps);
+      const confidence = this.calculateConfidence(lastTop.map((s) => s.paper), gaps);
 
       // 7. 조기 종료 조건 충족 시 반환
-      if (confidence >= MIN_CONFIDENCE && top.length >= MIN_PAPERS) {
-        const paperSummaries = await this.registerPapers(top);
+      if (confidence >= MIN_CONFIDENCE && lastTop.length >= MIN_PAPERS) {
+        const paperSummaries = await this.registerPapers(lastTop);
 
         return {
           papers: paperSummaries,
@@ -78,31 +84,18 @@ export class ResearchAgent {
       // 8. 재시도: 검색어 힌트 갱신
       refinementHint = gaps.length > 0
         ? `다음 갭을 보완하는 자료를 찾아주세요: ${gaps.join(', ')}`
-        : `더 구체적인 키워드로 재검색해주세요. 현재 결과 수: ${top.length}`;
+        : `더 구체적인 키워드로 재검색해주세요. 현재 결과 수: ${lastTop.length}`;
     }
 
-    // MAX_ITERATIONS 도달 시 현재까지 결과 반환
-    const finalKeywords = await this.generateKeywords(input.topic, input.outputType, refinementHint);
-    const [ssResults, openAlexFinal, crossRefFinal] = await Promise.allSettled([
-      this.searchSemanticScholar(finalKeywords),
-      this.searchOpenAlex(finalKeywords),
-      this.searchCrossRef(finalKeywords),
-    ]);
-    const rawPapers: AnyPaper[] = [
-      ...(ssResults.status === 'fulfilled' ? ssResults.value : []),
-      ...(openAlexFinal.status === 'fulfilled' ? openAlexFinal.value : []),
-      ...(crossRefFinal.status === 'fulfilled' ? crossRefFinal.value : []),
-    ];
-    const scored = await this.scorePapers(rawPapers, input.topic);
-    const top = this.deduplicatePapers(scored).slice(0, 10);
-    const paperSummaries = await this.registerPapers(top);
+    // 마지막 반복 결과 재사용 — 추가 API 호출 없음
+    const paperSummaries = await this.registerPapers(lastTop);
 
     return {
       papers: paperSummaries,
-      confidence: this.calculateConfidence(top, []),
+      confidence: this.calculateConfidence(lastTop.map((s) => s.paper), []),
       gaps: ['최대 반복 횟수 도달 - 자료가 제한적일 수 있습니다'],
-      searchKeywords: finalKeywords,
-      totalFound: rawPapers.length,
+      searchKeywords: lastKeywords,
+      totalFound: lastTotalFound,
       iterationCount: MAX_ITERATIONS,
     };
   }
@@ -195,7 +188,7 @@ ${hint ? `보완 힌트: ${hint}` : ''}
   private async scorePapers(
     papers: AnyPaper[],
     topic: string,
-  ): Promise<AnyPaper[]> {
+  ): Promise<Array<{ paper: AnyPaper; score: number }>> {
     if (papers.length === 0) return [];
 
     const scored: Array<{ paper: AnyPaper; score: number }> = [];
@@ -208,9 +201,7 @@ ${hint ? `보완 힌트: ${hint}` : ''}
       }
     }
 
-    return scored
-      .sort((a, b) => b.score - a.score)
-      .map((s) => s.paper);
+    return scored.sort((a, b) => b.score - a.score);
   }
 
   private async scoreBatch(
@@ -247,10 +238,12 @@ ${abstracts.join('\n\n')}
     return batch.map(() => 0.5);
   }
 
-  private deduplicatePapers(papers: AnyPaper[]): AnyPaper[] {
+  private deduplicatePapers(
+    papers: Array<{ paper: AnyPaper; score: number }>,
+  ): Array<{ paper: AnyPaper; score: number }> {
     const seen = new Set<string>();
-    return papers.filter((p) => {
-      const key = this.getPaperTitle(p).toLowerCase().trim().slice(0, 50);
+    return papers.filter((s) => {
+      const key = this.getPaperTitle(s.paper).toLowerCase().trim().slice(0, 50);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -278,33 +271,35 @@ ${abstracts.join('\n\n')}
     return Math.max(0, Math.min(1, score));
   }
 
-  private async registerPapers(papers: AnyPaper[]): Promise<PaperSummary[]> {
-    if (papers.length === 0) return [];
+  private async registerPapers(
+    scoredPapers: Array<{ paper: AnyPaper; score: number }>,
+  ): Promise<PaperSummary[]> {
+    if (scoredPapers.length === 0) return [];
 
     const keyPointsPerPaper = await this.extractKeyPointsBatch(
-      papers.map((p) => ({
-        title: this.getPaperTitle(p),
-        abstract: this.getPaperAbstract(p),
+      scoredPapers.map((s) => ({
+        title: this.getPaperTitle(s.paper),
+        abstract: this.getPaperAbstract(s.paper),
       })),
     );
 
     const summaries: PaperSummary[] = [];
 
-    for (let i = 0; i < papers.length; i++) {
-      const paper = papers[i]!;
+    for (let i = 0; i < scoredPapers.length; i++) {
+      const item = scoredPapers[i]!;
       try {
-        const entry = await referenceStore.addFromApiResult(paper);
+        const entry = await referenceStore.addFromApiResult(item.paper);
 
         summaries.push({
           refId: entry.id,
           title: entry.title,
           authors: entry.authors,
           year: entry.year,
-          relevanceScore: 0.7,
+          relevanceScore: item.score,
           keyPoints: keyPointsPerPaper[i] ?? [],
-          source: this.detectPaperSource(paper),
+          source: this.detectPaperSource(item.paper),
           doi: entry.doi,
-          abstract: this.getPaperAbstract(paper),
+          abstract: this.getPaperAbstract(item.paper),
         });
       } catch {
         // 등록 실패한 논문 스킵
