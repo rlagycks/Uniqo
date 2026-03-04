@@ -102,7 +102,7 @@ export interface PaperSummary {
   year: number;
   relevanceScore: number;
   keyPoints: string[];
-  source: 'semantic_scholar' | 'riss' | 'dbpia' | 'tavily' | 'manual';
+  source: 'semantic_scholar' | 'openalex' | 'crossref' | 'manual';
   doi?: string;
   abstract?: string;
 }
@@ -151,9 +151,8 @@ export type ReferenceSource =
   | 'url'
   | 'doi'
   | 'semantic_scholar'
-  | 'riss'
-  | 'dbpia'
-  | 'tavily';
+  | 'openalex'
+  | 'crossref';
 
 export interface ReferenceEntry {
   id: string;                // ref_001, ref_002, ...
@@ -175,7 +174,7 @@ export interface ReferenceInput {
   filePath?: string;
   url?: string;
   doi?: string;
-  apiResult?: SemanticScholarPaper | RissPaper | DbpiaPaper | TavilyResult;
+  apiResult?: SemanticScholarPaper | OpenAlexWork | CrossRefWork;
 }
 
 // ------ 벡터/청킹 ------
@@ -216,50 +215,31 @@ export interface SemanticScholarResponse {
   next?: number;
 }
 
-export interface RissPaper {
-  controlNo: string;
+export interface OpenAlexWork {
+  id: string;          // https://openalex.org/W...
   title: string;
-  creator: string;
-  publisher: string;
-  pubtYear: string;
-  url: string;
+  authorships: Array<{ author: { display_name: string } }>;
+  publication_year: number;
+  abstract_inverted_index?: Record<string, number[]>;
+  doi?: string;
+  language?: string;
+}
+
+export interface OpenAlexResponse {
+  results: OpenAlexWork[];
+  meta: { count: number };
+}
+
+export interface CrossRefWork {
+  DOI: string;
+  title: string[];
+  author?: Array<{ family: string; given: string }>;
+  'published-print'?: { 'date-parts': number[][] };
   abstract?: string;
 }
 
-export interface RissResponse {
-  result: {
-    resultCode: string;
-    resultMsg: string;
-    totalCount: string;
-    rows: RissPaper[];
-  };
-}
-
-export interface DbpiaPaper {
-  publicationId: string;
-  title: string;
-  author: string;
-  publishYear: string;
-  journalName: string;
-  abstract?: string;
-  url: string;
-}
-
-export interface DbpiaResponse {
-  totalCount: number;
-  content: DbpiaPaper[];
-}
-
-export interface TavilyResult {
-  title: string;
-  url: string;
-  content: string;
-  score: number;
-  published_date?: string;
-}
-
-export interface TavilyResponse {
-  results: TavilyResult[];
+export interface CrossRefResponse {
+  message: { items: CrossRefWork[] };
 }
 
 // ------ 사용자 환경설정 ------
