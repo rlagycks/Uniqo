@@ -1,200 +1,88 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { v4 as uuidv4 } from 'uuid';
-import { createSamplingCaller } from './sampling.js';
-import { OrchestratorAgent } from '../agents/orchestrator.js';
+import { searchAll } from '../tools/search.js';
+import type { PaperResult } from '../types/index.js';
 import { referenceStore } from '../reference/store.js';
-import { checkpointManager } from '../workflow/checkpoint.js';
+import { formatterAgent } from '../agents/formatter.js';
+import { referenceParser } from '../reference/parser.js';
+import type { Draft } from '../types/index.js';
 
 const server = new McpServer({
   name: 'uni-agent',
   version: '2.0.0',
 });
-const llm = createSamplingCaller(server);
 
-// ─── run_task ──────────────────────────────────────────────────
+// ─── search_papers ──────────────────────────────────────────────
 
 server.tool(
-  'run_task',
-  '학업 과제를 자동으로 처리합니다. PPT 발표자료, 보고서, 노트 등을 생성합니다.',
+  'search_papers',
+  '학술 논문을 검색합니다. 반환된 결과를 바탕으로 관련성을 직접 판단하고 인용할 논문을 선택하세요.',
   {
-    intent: z.string().describe('처리할 작업 내용 (예: "AI 윤리 발표 12장 만들어줘")'),
-    session_id: z
-      .string()
-      .optional()
-      .describe('세션 ID (없으면 자동 생성)'),
-    attachments: z
-      .array(z.string())
-      .optional()
-      .describe('참고할 파일 경로 목록 (PDF, PPTX, DOCX 등)'),
-    preferences: z
-      .object({
-        slide_count: z.number().optional().describe('PPT 슬라이드 수 (예: 12)'),
-        style: z.enum(['minimal', 'detailed', 'academic']).optional().describe('작성 스타일'),
-        template: z.string().optional().describe('템플릿 이름'),
-        output_format: z.enum(['pdf', 'docx', 'md']).optional().describe('출력 형식'),
-      })
-      .optional()
-      .describe('출력 환경설정'),
+    topic: z.string().describe('검색 주제'),
+    keywords: z.array(z.string()).optional().describe('검색 키워드 (없으면 topic 사용)'),
+    limit: z.number().optional().default(15).describe('최대 결과 수 (기본 15)'),
   },
-  async ({ intent, session_id, attachments, preferences }) => {
-    const sessionId = session_id ?? uuidv4();
-    const agent = new OrchestratorAgent(llm);
-
-    try {
-      const result = await agent.run({
-        intent,
-        sessionId,
-        attachments,
-        preferences: preferences
-          ? {
-              slideCount: preferences.slide_count,
-              style: preferences.style,
-              template: preferences.template,
-              outputFormat: preferences.output_format,
-            }
-          : undefined,
-      });
-
-      if (result.status === 'done') {
-        const progressSummary = result.progress
-          .map((p) => `[${p.agent}] ${p.step}: ${p.message}`)
-          .join('\n');
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: [
-                '✅ 작업 완료!',
-                '',
-                `📄 출력 파일: ${result.outputPath || '(없음)'}`,
-                '',
-                '📋 진행 로그:',
-                progressSummary,
-              ].join('\n'),
-            },
-          ],
-        };
-      }
-
-      if (result.status === 'checkpoint') {
-        const optionsList = result.options
-          .map((opt, i) => `${i + 1}. ${opt}`)
-          .join('\n');
-
-        return {
-          content: [
-            {
-              type: 'text',
-              text: [
-                '⏸️ 확인이 필요합니다.',
-                '',
-                result.question,
-                '',
-                '선택지:',
-                optionsList,
-                '',
-                `체크포인트 ID: ${result.checkpointId}`,
-                '',
-                '`answer_checkpoint` 도구로 답변을 제출하세요.',
-              ].join('\n'),
-            },
-          ],
-        };
-      }
-
-      // error
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `❌ 오류 발생: ${result.message}`,
-          },
-        ],
-        isError: true,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        content: [{ type: 'text', text: `❌ 내부 오류: ${message}` }],
-        isError: true,
-      };
-    }
+  async ({ topic, keywords, limit }) => {
+    const papers = await searchAll(keywords ?? [topic], topic, limit ?? 15);
+    return {
+      content: [{ type: 'text', text: JSON.stringify(papers, null, 2) }],
+    };
   },
 );
 
-// ─── answer_checkpoint ─────────────────────────────────────────
+// ─── register_references ───────────────────────────────────────
 
 server.tool(
-  'answer_checkpoint',
-  '체크포인트에서 확인 요청에 답변하고 작업을 재개합니다.',
+  'register_references',
+  '선택한 논문들을 레퍼런스 DB에 등록합니다. search_papers 결과 중 관련성 높은 논문만 등록하세요.',
   {
-    checkpoint_id: z.string().describe('체크포인트 ID'),
-    selected_option: z.string().describe('선택한 옵션 텍스트'),
-    session_id: z.string().describe('세션 ID'),
+    papers: z.array(z.object({
+      title: z.string(),
+      authors: z.array(z.string()),
+      year: z.number(),
+      abstract: z.string().optional(),
+      doi: z.string().optional(),
+      url: z.string().optional(),
+      source: z.string(),
+    })).describe('등록할 논문 목록'),
   },
-  async ({ checkpoint_id, selected_option, session_id }) => {
-    const checkpoint = checkpointManager.getCheckpoint(checkpoint_id);
-    if (!checkpoint) {
-      return {
-        content: [{ type: 'text', text: '❌ 체크포인트를 찾을 수 없습니다.' }],
-        isError: true,
-      };
+  async ({ papers }) => {
+    const ids: string[] = [];
+    for (const p of papers) {
+      const entry = await referenceStore.addPaperResult(p as PaperResult);
+      ids.push(`${entry.id}: ${entry.citationKey} — ${entry.title}`);
     }
+    return {
+      content: [{ type: 'text', text: ids.join('\n') }],
+    };
+  },
+);
 
-    const agent = new OrchestratorAgent(llm);
-    try {
-      const result = await agent.run({
-        intent: '',
-        sessionId: session_id,
-        checkpointAnswer: {
-          checkpointId: checkpoint_id,
-          selectedOption: selected_option,
-        },
-      });
+// ─── save_output ────────────────────────────────────────────────
 
-      if (result.status === 'done') {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: [
-                '✅ 작업 재개 및 완료!',
-                `📄 출력 파일: ${result.outputPath || '(없음)'}`,
-              ].join('\n'),
-            },
-          ],
-        };
-      }
-
-      if (result.status === 'checkpoint') {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: [
-                '⏸️ 추가 확인이 필요합니다.',
-                result.question,
-                `체크포인트 ID: ${result.checkpointId}`,
-              ].join('\n'),
-            },
-          ],
-        };
-      }
-
-      return {
-        content: [{ type: 'text', text: `❌ 오류: ${result.message}` }],
-        isError: true,
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        content: [{ type: 'text', text: `❌ 내부 오류: ${message}` }],
-        isError: true,
-      };
-    }
+server.tool(
+  'save_output',
+  'Marp PPT 마크다운 또는 보고서 마크다운을 파일로 변환·저장합니다.',
+  {
+    content: z.string().describe('Marp/보고서 마크다운 전체 내용'),
+    output_type: z.enum(['ppt', 'report', 'notes']).describe('출력 유형'),
+    title: z.string().describe('파일 제목'),
+    format: z.enum(['pdf', 'docx', 'md']).optional().describe('출력 형식 (기본: ppt→pdf, report→docx, notes→md)'),
+  },
+  async ({ content, output_type, title }) => {
+    const draft: Draft = {
+      outputType: output_type,
+      structure: [],
+      content,
+      selfReviewScore: 1.0,
+      citations: [],
+      title,
+    };
+    const output = await formatterAgent.run({ draft, outputType: output_type });
+    return {
+      content: [{ type: 'text', text: `저장 완료: ${output.outputPath} (${Math.round(output.sizeBytes / 1024)}KB, ${output.format})` }],
+    };
   },
 );
 
@@ -217,25 +105,40 @@ server.tool(
     const entries = referenceStore.list(filter);
 
     if (entries.length === 0) {
-      return {
-        content: [{ type: 'text', text: '등록된 참고문헌이 없습니다.' }],
-      };
+      return { content: [{ type: 'text', text: '등록된 참고문헌이 없습니다.' }] };
     }
 
     const list = entries
       .map((e, i) => {
         const authors = e.authors.length > 0 ? e.authors.join(', ') : '저자 미상';
-        return `${i + 1}. [${e.id}] ${e.title} - ${authors} (${e.year}) [${e.source}]`;
+        return `${i + 1}. [${e.id}] ${e.title} — ${authors} (${e.year}) [${e.source}]`;
       })
       .join('\n');
 
     return {
-      content: [
-        {
-          type: 'text',
-          text: `📚 참고문헌 목록 (${entries.length}건)\n\n${list}`,
-        },
-      ],
+      content: [{ type: 'text', text: `📚 참고문헌 목록 (${entries.length}건)\n\n${list}` }],
+    };
+  },
+);
+
+// ─── parse_file ─────────────────────────────────────────────────
+
+server.tool(
+  'parse_file',
+  '파일(PDF/PPTX/DOCX/HWP)에서 텍스트와 메타데이터를 추출합니다.',
+  {
+    file_path: z.string().describe('파싱할 파일의 절대 경로'),
+  },
+  async ({ file_path }) => {
+    const parsed = await referenceParser.parseFile(file_path);
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          text: parsed.text.slice(0, 10000),
+          metadata: parsed.metadata,
+        }, null, 2),
+      }],
     };
   },
 );
@@ -245,7 +148,7 @@ server.tool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('uni-agent MCP server started');
+  console.error('uni-agent MCP server started (Thin MCP mode)');
 }
 
 main().catch((err) => {
