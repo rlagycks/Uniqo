@@ -5,6 +5,7 @@ import type {
   ReferenceEntry,
   ReferenceInput,
   ReferenceSource,
+  PaperResult,
   SemanticScholarPaper,
   OpenAlexWork,
   CrossRefWork,
@@ -212,6 +213,50 @@ export class ReferenceStore {
       doi,
       url,
       source,
+      chunkIds: chunks.map((c) => c.id),
+      usedIn: [],
+      citationKey,
+      addedAt: new Date().toISOString(),
+    };
+
+    this.index.entries.push(entry);
+    this.citationKeys.add(citationKey);
+    this.save();
+
+    for (const chunk of chunks) {
+      await vectorStore.add(chunk);
+    }
+
+    return entry;
+  }
+
+  async addPaperResult(paper: PaperResult): Promise<ReferenceEntry> {
+    this.load();
+
+    const citationKey = generateCitationKey(
+      paper.authors.length > 0 ? paper.authors : ['unknown'],
+      paper.year,
+      this.citationKeys,
+    );
+    const id = this.nextId();
+
+    const text = paper.abstract ?? paper.title;
+    const rawChunks = chunkGenericText(id, text);
+    const chunks = await Promise.all(
+      rawChunks.map(async (chunk) => {
+        chunk.embedding = await contextManager.embed(chunk.text);
+        return chunk;
+      }),
+    );
+
+    const entry: ReferenceEntry = {
+      id,
+      title: paper.title,
+      authors: paper.authors,
+      year: paper.year,
+      doi: paper.doi,
+      url: paper.url,
+      source: paper.source as ReferenceSource,
       chunkIds: chunks.map((c) => c.id),
       usedIn: [],
       citationKey,

@@ -25,7 +25,7 @@ export class VectorStore {
   private dimension: number;
 
   constructor() {
-    this.dimension = process.env['VOYAGE_API_KEY'] ? 1024 : 1536;
+    this.dimension = 768;
   }
 
   async initialize(): Promise<void> {

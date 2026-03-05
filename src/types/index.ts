@@ -2,12 +2,7 @@
 // uni-agent 공유 타입 정의
 // ============================================================
 
-// ------ 기본 결과 타입 ------
-
-export type TaskResult =
-  | { status: 'done'; outputPath: string; progress: StepLog[] }
-  | { status: 'checkpoint'; checkpointId: string; question: string; options: string[] }
-  | { status: 'error'; message: string };
+// ------ 기본 유틸 ------
 
 export interface StepLog {
   agent: string;
@@ -17,48 +12,9 @@ export interface StepLog {
   details?: Record<string, unknown>;
 }
 
-// ------ DAG (Directed Acyclic Graph) 타입 ------
+// ------ 출력 타입 ------
 
-export type AgentType = 'orchestrator' | 'research' | 'writer' | 'formatter';
-export type NodeStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 export type OutputType = 'ppt' | 'report' | 'notes' | 'research_only';
-
-export interface DAGNode {
-  id: string;
-  type: string;
-  agent: AgentType;
-  status: NodeStatus;
-  input?: Record<string, unknown>;
-  output?: Record<string, unknown>;
-  retryCount: number;
-  maxRetries: number;
-}
-
-export interface DAGEdge {
-  from: string;
-  to: string;
-}
-
-export interface DAGState {
-  nodes: DAGNode[];
-  edges: DAGEdge[];
-  currentNodeId: string | null;
-  checkpointId?: string;
-}
-
-// ------ 체크포인트 ------
-
-export interface Checkpoint {
-  id: string;
-  sessionId: string;
-  question: string;
-  options: string[];
-  dagStateSnapshot: DAGState;
-  triggerReason: string;
-  createdAt: string;
-  originalIntent: string;
-  originalPreferences?: UserPreferences;
-}
 
 // ------ 세션 ------
 
@@ -67,7 +23,7 @@ export interface TaskHistoryEntry {
   intent: string;
   outputPath?: string;
   completedAt: string;
-  status: 'done' | 'error' | 'checkpoint';
+  status: 'done' | 'error';
 }
 
 export interface SessionState {
@@ -75,7 +31,6 @@ export interface SessionState {
   userProfile: UserProfile;
   referenceLibrary: string[];  // refId 목록
   taskHistory: TaskHistoryEntry[];
-  currentTask?: CurrentTask;
   createdAt: string;
   updatedAt: string;
 }
@@ -86,34 +41,17 @@ export interface UserProfile {
   major?: string;
 }
 
-export interface CurrentTask {
-  intent: string;
-  outputType: OutputType;
-  dagState: DAGState;
-  startedAt: string;
-}
-
 // ------ 리서치 ------
 
-export interface PaperSummary {
-  refId: string;
+/** 검색 API 결과의 정규화된 단일 타입 (Thin MCP 패턴용) */
+export interface PaperResult {
   title: string;
   authors: string[];
   year: number;
-  relevanceScore: number;
-  keyPoints: string[];
-  source: 'semantic_scholar' | 'openalex' | 'crossref' | 'manual';
-  doi?: string;
   abstract?: string;
-}
-
-export interface ResearchReport {
-  papers: PaperSummary[];
-  confidence: number;        // 0~1
-  gaps: string[];            // 발견된 자료 공백
-  searchKeywords: string[];
-  totalFound: number;
-  iterationCount: number;
+  doi?: string;
+  source: 'semantic_scholar' | 'openalex' | 'crossref';
+  url?: string;
 }
 
 // ------ 작성 ------
@@ -242,44 +180,7 @@ export interface CrossRefResponse {
   message: { items: CrossRefWork[] };
 }
 
-// ------ 사용자 환경설정 ------
-
-export interface UserPreferences {
-  slideCount?: number;       // PPT 슬라이드 수 (예: 12)
-  style?: 'minimal' | 'detailed' | 'academic';
-  template?: string;         // templates/ 내 템플릿 이름
-  outputFormat?: 'pdf' | 'docx' | 'md';
-}
-
-// ------ 에이전트 입력 ------
-
-export interface OrchestratorInput {
-  intent: string;
-  sessionId: string;
-  attachments?: string[];  // 로컬 파일 경로
-  preferences?: UserPreferences;
-  checkpointAnswer?: {
-    checkpointId: string;
-    selectedOption: string;
-  };
-}
-
-export interface ResearchInput {
-  topic: string;
-  outputType: OutputType;
-  sessionId: string;
-  existingPapers?: PaperSummary[];
-  refinementHint?: string;  // 체크포인트 답변 반영
-}
-
-export interface WriterInput {
-  researchReport: ResearchReport;
-  outputType: OutputType;
-  intent: string;
-  sessionId: string;
-  refinementHint?: string;
-  preferences?: UserPreferences;
-}
+// ------ 포매터 입출력 ------
 
 export interface FormatterInput {
   draft: Draft;
@@ -287,8 +188,6 @@ export interface FormatterInput {
   outputDir?: string;
   templateName?: string;
 }
-
-// ------ 포매터 출력 ------
 
 export interface FormatterOutput {
   outputPath: string;
