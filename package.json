@@ -1,9 +1,9 @@
 {
   "name": "uni-agent",
   "version": "2.0.0",
-  "description": "한국 대학생을 위한 멀티 에이전트 학업 자동화 MCP 플러그인",
+  "description": "한국 대학생을 위한 학업 자동화 MCP 플러그인",
   "type": "module",
-  "main": "dist/mcp/server.js",
+  "main": "dist/server.cjs",
   "bin": {
     "uni-agent": "bin/install.js"
   },
