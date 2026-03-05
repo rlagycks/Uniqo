@@ -1,33 +1,36 @@
 # uni-agent
 
-한국 대학생을 위한 멀티 에이전트 학업 자동화 MCP 플러그인.
+한국 대학생을 위한 학업 자동화 MCP 플러그인.
 `npx uni-agent install` 한 줄로 Claude Desktop에 설치. 추가 API 키 불필요.
 
 ## 프로젝트의 본질
 
-도구를 호출하는 게 아니라 **에이전트가 판단한다**.
+**Thin MCP 패턴**: MCP 서버는 I/O 도구만 제공하고, Claude Desktop AI가 직접 판단하고 콘텐츠를 작성한다.
 
 ```
 사용자: "AI 윤리 발표 준비해줘"
-→ Orchestrator가 계획 수립
-→ Research Agent가 논문 조사 (자체 루프, 최대 3회)
-→ Writer Agent가 구성 설계 + 초안 작성 + 자체 검토
-→ Formatter Agent가 Marp → PDF 출력
+→ Claude Desktop AI가 직접:
+    search_papers("AI 윤리") → 논문 15편 수신
+    관련 6편 선별 (AI 자신이 판단)
+    register_references([...6편...]) → ref_001~ref_006 등록
+    Marp 마크다운 직접 작성 (12장)
+    save_output(ppt) → ~/Desktop/AI_윤리_발표.pdf
 ```
 
-Claude Desktop에 노출되는 도구는 `run_task`, `answer_checkpoint`, `list_references` 셋뿐.
-내부 에이전트 구조는 사용자에게 노출하지 않는다.
+Claude Desktop에 노출되는 도구는 5개:
+`search_papers`, `register_references`, `save_output`, `list_references`, `parse_file`
 
 ## 아키텍처
 
 ```
-Claude Desktop (MCP over stdio)
-    └── uni-agent MCP Server
-            ├── Orchestrator      # 지휘, DAG 계획, 체크포인트 판단
-            ├── Research Agent    # 검색, 관련성 채점, 갭 탐지
-            ├── Writer Agent      # 구조 설계, 초안, 자체 검토
-            ├── Formatter Agent   # Marp→PDF, Pandoc→DOCX
-            └── Context Manager   # Vector Store, 토큰 예산, 세션
+Claude Desktop AI (판단·작성 주체)
+    └── uni-agent MCP Server (I/O 도구 5개 제공)
+            ├── src/tools/search.ts   # SS + OpenAlex + CrossRef 병렬 검색
+            ├── src/reference/        # parser, store, citation
+            ├── src/agents/
+            │   └── formatter.ts      # Marp→PDF, Pandoc→DOCX (유일한 내부 에이전트)
+            ├── src/context/          # manager, chunker, vector-store (768차원)
+            └── src/mcp/server.ts     # 도구 5개 등록
 ```
 
 외부 연결: Semantic Scholar (무료) · OpenAlex (무료, 한국어 필터) · CrossRef (무료)
@@ -35,13 +38,12 @@ Claude Desktop (MCP over stdio)
 ## 기술 스택
 
 - **언어**: TypeScript / Node.js v20 LTS
-- **MCP**: `@modelcontextprotocol/sdk`
-- **LLM**: MCP Sampling (`server.createMessage()`) — Claude Desktop에 위임, API 키 불필요
-- **임베딩**: `@xenova/transformers` (로컬 신경망, `multilingual-e5-base`) — API 키 불필요
+- **MCP**: `@modelcontextprotocol/sdk` (Thin MCP 패턴 — 서버에서 LLM 호출 없음)
+- **임베딩**: `@xenova/transformers` (로컬 신경망, `multilingual-e5-base`, 768차원) — API 키 불필요
 - **PPT**: `@marp-team/marp-cli` → PDF
 - **문서**: Pandoc (시스템 CLI) → DOCX / PDF
 - **벡터 DB**: `hnswlib-node` (로컬)
-- **빌드**: tsup · **테스트**: Vitest · **린트**: Biome
+- **빌드**: tsup (CJS) · **테스트**: Vitest · **린트**: Biome
 
 ## 핵심 타입
 
@@ -49,27 +51,40 @@ Claude Desktop (MCP over stdio)
 가장 중요한 것만:
 
 ```typescript
-// 모든 에이전트 작업의 결과
-type TaskResult =
-  | { status: 'done';       outputPath: string; progress: StepLog[] }
-  | { status: 'checkpoint'; checkpointId: string; question: string; options: string[] }
-  | { status: 'error';      message: string }
+// 검색 결과 정규화 타입
+interface PaperResult {
+  title: string;
+  authors: string[];
+  year: number;
+  abstract?: string;
+  doi?: string;
+  source: 'semantic_scholar' | 'openalex' | 'crossref';
+  url?: string;
+}
 
-// 체크포인트 발동 조건 (orchestrator.ts)
-// research.confidence < 0.6 || papers.length < 3
-// plan.ambiguityScore > 0.7  || gaps.length > 2
+// Formatter Agent 입출력
+interface Draft {
+  outputType: OutputType;    // 'ppt' | 'report' | 'notes' | 'research_only'
+  structure: Section[];
+  content: string;           // Claude AI가 작성한 마크다운
+  selfReviewScore: number;
+  citations: CitationRef[];
+  title: string;
+}
 ```
 
 ## 디렉토리
 
 ```
 src/
-  mcp/server.ts          # Claude 연결 지점. 도구 3개만 노출
-  agents/                # orchestrator, research, writer, formatter
+  mcp/server.ts          # Claude 연결 지점. 도구 5개 노출
+  tools/search.ts        # searchAll, searchSS, searchOA, searchCR, dedup
+  agents/
+    formatter.ts         # Marp→PDF, Pandoc→DOCX (내부 에이전트)
   context/               # manager, chunker, vector-store
   reference/             # parser, store, citation
-  workflow/              # dag, checkpoint
-  types/index.ts         # 공유 타입
+  plugins/               # PluginRegistry (서드파티 확장)
+  types/index.ts         # 공유 타입 (슬림화됨)
 bin/install.js           # npx 진입점
 templates/               # 한국 대학 PPT·보고서 양식
 ```
@@ -78,10 +93,10 @@ templates/               # 한국 대학 PPT·보고서 양식
 
 | 문서 | 내용 |
 |------|------|
-| `agent_docs/agents.md` | 각 에이전트 입출력 계약, 내부 로직 명세 |
-| `agent_docs/context.md` | 토큰 예산, 청킹 전략, RAG 설계 |
+| `agent_docs/agents.md` | MCP 도구 5개 명세, Formatter Agent, search.ts |
+| `agent_docs/context.md` | 청킹 전략, Vector Store(768차원), 임베딩, 세션 |
 | `agent_docs/reference.md` | 파일 파싱, 레퍼런스 저장 구조, 인용 추적 |
-| `agent_docs/workflow.md` | DAG 실행, 체크포인트 생명주기 |
+| `agent_docs/workflow.md` | Thin MCP 워크플로우, 도구 호출 순서 |
 | `docs/기획.md` | 전체 기획 문서 (Why + 의사결정 로그) |
 
 ## 현재 상태
@@ -89,4 +104,5 @@ templates/               # 한국 대학 PPT·보고서 양식
 - [x] Phase 1: MCP Hello World → PPT → 보고서 → 설치 마법사 → v0.1.0
 - [x] Phase 2: Research Agent · Context Manager · 체크포인트
 - [x] Phase 3: 플러그인 SDK · HWP 지원 · v1.0.0
-- [ ] Phase 4: MCP Sampling 전환 · 외부 API 무의존 · 로컬 임베딩 교체
+- [x] Phase 4: 외부 API 무의존 · 로컬 임베딩 · Thin MCP 리팩토링 → v2.0.0
+- [ ] Phase 5: 커뮤니티 · 스킬 디렉토리 · npm 배포
