@@ -75,7 +75,6 @@ export function formatApaEntry(entry: ReferenceEntry): string {
 
   switch (entry.source) {
     case 'semantic_scholar':
-    case 'riss':
       return `${authorStr} (${year}). ${title}.${doi}${url}`;
     case 'pdf':
     case 'docx':
