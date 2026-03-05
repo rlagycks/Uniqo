@@ -92,7 +92,7 @@ async function install() {
   }
 
   // 4. uni-agent 항목 추가 (기존 항목 덮어쓰지 않음)
-  const serverPath = path.join(PACKAGE_ROOT, 'dist', 'mcp', 'server.js');
+  const serverPath = path.join(PACKAGE_ROOT, 'dist', 'server.cjs');
 
   if (config.mcpServers['uni-agent']) {
     console.log('⚠️  uni-agent가 이미 등록되어 있습니다. 업데이트합니다...');
@@ -149,16 +149,21 @@ async function install() {
   console.log('   1. Claude Desktop을 완전히 종료합니다');
   console.log('   2. Claude Desktop을 다시 실행합니다');
   console.log('   3. 채팅창에서 다음 도구를 사용할 수 있습니다:');
-  console.log('      • run_task        - 과제 자동 처리');
-  console.log('      • answer_checkpoint - 확인 요청 답변');
-  console.log('      • list_references  - 참고문헌 조회');
+  console.log('      • search_papers      - 논문 검색');
+  console.log('      • register_references - 참고문헌 등록');
+  console.log('      • save_output        - PPT/보고서/노트 저장');
+  console.log('      • list_references    - 참고문헌 조회');
+  console.log('      • parse_file         - 파일 파싱');
   console.log('');
   console.log(`📦 플러그인 디렉토리: ${pluginDir}`);
   console.log('   커스텀 에이전트를 등록하려면 위 디렉토리를 참고하세요.');
   console.log('');
-  console.log('💡 사용 예시:');
-  console.log('   "AI 윤리 발표 12장 만들어줘"');
-  console.log('   "기후변화 보고서 작성해줘"');
+  console.log('💡 슬래시 명령 (Claude Desktop에서 / 입력):');
+  console.log('   /ppt <topic>    - 발표 자료 생성');
+  console.log('   /report <topic> - 보고서 작성');
+  console.log('   /search <topic> - 논문 검색');
+  console.log('   /notes <topic>  - 학습 노트');
+  console.log('   /refs           - 참고문헌 목록');
   console.log('');
   console.log('ℹ️  첫 실행 시 임베딩 모델(~280MB)을 자동 다운로드합니다.');
   console.log('   이후에는 로컬 캐시를 사용하므로 추가 다운로드가 없습니다.');

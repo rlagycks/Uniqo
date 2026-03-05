@@ -143,6 +143,82 @@ server.tool(
   },
 );
 
+// ─── MCP Prompts (slash commands) ──────────────────────────────
+
+server.prompt(
+  'ppt',
+  'Make a presentation: search papers → register → write Marp → save PDF',
+  { topic: z.string().describe('Presentation topic') },
+  ({ topic }) => ({
+    messages: [{
+      role: 'user',
+      content: {
+        type: 'text',
+        text: `Create a presentation on "${topic}".\n1. Use search_papers to find relevant papers\n2. Select 5-8 papers and register with register_references\n3. Write 12-slide Marp markdown\n4. Save with save_output (type: ppt)`,
+      },
+    }],
+  }),
+);
+
+server.prompt(
+  'report',
+  'Write a report: search papers → register → write → save DOCX',
+  { topic: z.string().describe('Report topic') },
+  ({ topic }) => ({
+    messages: [{
+      role: 'user',
+      content: {
+        type: 'text',
+        text: `Write an academic report on "${topic}".\n1. Use search_papers to find relevant papers\n2. Select 5-8 papers and register with register_references\n3. Write full report markdown (intro, body, conclusion, references)\n4. Save with save_output (type: report)`,
+      },
+    }],
+  }),
+);
+
+server.prompt(
+  'search',
+  'Search academic papers and summarize results',
+  { topic: z.string().describe('Search topic or keywords') },
+  ({ topic }) => ({
+    messages: [{
+      role: 'user',
+      content: {
+        type: 'text',
+        text: `Use search_papers to find papers on "${topic}" and summarize the key results.`,
+      },
+    }],
+  }),
+);
+
+server.prompt(
+  'notes',
+  'Make study notes from a topic or file path',
+  { topic: z.string().describe('Topic or absolute file path') },
+  ({ topic }) => ({
+    messages: [{
+      role: 'user',
+      content: {
+        type: 'text',
+        text: `Create study notes on "${topic}".\nIf it looks like a file path, use parse_file first. Otherwise use search_papers to gather material.\nOrganize key concepts clearly, then save with save_output (type: notes).`,
+      },
+    }],
+  }),
+);
+
+server.prompt(
+  'refs',
+  'List all registered references',
+  () => ({
+    messages: [{
+      role: 'user',
+      content: {
+        type: 'text',
+        text: 'Use list_references to show all registered references.',
+      },
+    }],
+  }),
+);
+
 // ─── 서버 시작 ─────────────────────────────────────────────────
 
 async function main() {
