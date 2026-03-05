@@ -7,6 +7,4 @@ coverage/
 .DS_Store
 *.tsbuildinfo
 .idea/
-agent_docs/*
-docs/*
 .claude/
