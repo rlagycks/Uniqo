@@ -2,16 +2,63 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { searchAll } from '../tools/search.js';
-import type { PaperResult } from '../types/index.js';
+import type { PaperResult, OutputType } from '../types/index.js';
 import { referenceStore } from '../reference/store.js';
 import { formatterAgent } from '../agents/formatter.js';
 import { referenceParser } from '../reference/parser.js';
 import type { Draft } from '../types/index.js';
+import { wrapTool } from './hook.js';
+import { contextInjector } from './context-injector.js';
+import { stateManager } from './state.js';
 
 const server = new McpServer({
   name: 'uni-agent',
-  version: '2.0.0',
+  version: '3.0.0',
 });
+
+// ─── plan_task ───────────────────────────────────────────────────
+
+const MILESTONE_MAP: Record<string, string[]> = {
+  ppt: ['search_papers', 'register_references', '콘텐츠 작성 (Marp)', 'save_output'],
+  report: ['search_papers', 'register_references', '콘텐츠 작성 (보고서)', 'save_output'],
+  notes: ['parse_file 또는 search_papers', '콘텐츠 작성 (노트)', 'save_output'],
+  research_only: ['search_papers', 'register_references', '결과 정리'],
+};
+
+server.tool(
+  'plan_task',
+  '작업 목표를 설정하고 마일스톤을 계획합니다. 새 작업 시작 시 가장 먼저 호출하세요.',
+  {
+    goal: z.string().describe('달성할 목표 (예: "AI 윤리 발표 12장 만들기")'),
+    output_type: z
+      .enum(['ppt', 'report', 'notes', 'research_only'])
+      .optional()
+      .describe('출력 유형'),
+    slide_count: z
+      .number()
+      .optional()
+      .describe('PPT 슬라이드 수 (output_type이 ppt일 때)'),
+  },
+  wrapTool('plan_task', async ({ goal, output_type, slide_count }) => {
+    const type = output_type ?? 'ppt';
+    const steps = MILESTONE_MAP[type] ?? MILESTONE_MAP['ppt'] ?? [];
+    const slideNote =
+      type === 'ppt' && slide_count ? ` (${slide_count}장)` : '';
+
+    const stepList = steps
+      .map((s, i) => `  ${i + 1}. ${s}`)
+      .join('\n');
+
+    const plan =
+      `📋 작업 계획\n` +
+      `목표: ${goal}${slideNote}\n` +
+      `출력 유형: ${type}\n\n` +
+      `마일스톤:\n${stepList}\n\n` +
+      `다음 단계: search_papers 를 호출해 관련 논문을 검색하세요.`;
+
+    return { content: [{ type: 'text', text: plan }] };
+  }),
+);
 
 // ─── search_papers ──────────────────────────────────────────────
 
@@ -23,12 +70,12 @@ server.tool(
     keywords: z.array(z.string()).optional().describe('검색 키워드 (없으면 topic 사용)'),
     limit: z.number().optional().default(15).describe('최대 결과 수 (기본 15)'),
   },
-  async ({ topic, keywords, limit }) => {
+  wrapTool('search_papers', async ({ topic, keywords, limit }) => {
     const papers = await searchAll(keywords ?? [topic], topic, limit ?? 15);
     return {
       content: [{ type: 'text', text: JSON.stringify(papers, null, 2) }],
     };
-  },
+  }),
 );
 
 // ─── register_references ───────────────────────────────────────
@@ -47,7 +94,7 @@ server.tool(
       source: z.string(),
     })).describe('등록할 논문 목록'),
   },
-  async ({ papers }) => {
+  wrapTool('register_references', async ({ papers }) => {
     const ids: string[] = [];
     for (const p of papers) {
       const entry = await referenceStore.addPaperResult(p as PaperResult);
@@ -56,7 +103,7 @@ server.tool(
     return {
       content: [{ type: 'text', text: ids.join('\n') }],
     };
-  },
+  }),
 );
 
 // ─── save_output ────────────────────────────────────────────────
@@ -70,20 +117,23 @@ server.tool(
     title: z.string().describe('파일 제목'),
     format: z.enum(['pdf', 'docx', 'md']).optional().describe('출력 형식 (기본: ppt→pdf, report→docx, notes→md)'),
   },
-  async ({ content, output_type, title }) => {
+  wrapTool('save_output', async ({ content, output_type, title }) => {
     const draft: Draft = {
-      outputType: output_type,
+      outputType: output_type as OutputType,
       structure: [],
       content,
       selfReviewScore: 1.0,
       citations: [],
       title,
     };
-    const output = await formatterAgent.run({ draft, outputType: output_type });
+    const output = await formatterAgent.run({ draft, outputType: output_type as OutputType });
     return {
-      content: [{ type: 'text', text: `저장 완료: ${output.outputPath} (${Math.round(output.sizeBytes / 1024)}KB, ${output.format})` }],
+      content: [{
+        type: 'text',
+        text: `저장 완료: ${output.outputPath} (${Math.round(output.sizeBytes / 1024)}KB, ${output.format})`,
+      }],
     };
-  },
+  }),
 );
 
 // ─── list_references ───────────────────────────────────────────
@@ -98,7 +148,7 @@ server.tool(
       .describe('출처 필터'),
     year: z.number().optional().describe('출판 연도 필터'),
   },
-  async ({ source, year }) => {
+  wrapTool('list_references', async ({ source, year }) => {
     const filter: Parameters<typeof referenceStore.list>[0] = {};
     if (source) filter.source = source;
     if (year !== undefined) filter.year = year;
@@ -118,7 +168,7 @@ server.tool(
     return {
       content: [{ type: 'text', text: `📚 참고문헌 목록 (${entries.length}건)\n\n${list}` }],
     };
-  },
+  }),
 );
 
 // ─── parse_file ─────────────────────────────────────────────────
@@ -129,7 +179,7 @@ server.tool(
   {
     file_path: z.string().describe('파싱할 파일의 절대 경로'),
   },
-  async ({ file_path }) => {
+  wrapTool('parse_file', async ({ file_path }) => {
     const parsed = await referenceParser.parseFile(file_path);
     return {
       content: [{
@@ -140,21 +190,21 @@ server.tool(
         }, null, 2),
       }],
     };
-  },
+  }),
 );
 
 // ─── MCP Prompts (slash commands) ──────────────────────────────
 
 server.prompt(
   'ppt',
-  'Make a presentation: search papers → register → write Marp → save PDF',
+  'Make a presentation: plan → search papers → register → write Marp → save PDF',
   { topic: z.string().describe('Presentation topic') },
   ({ topic }) => ({
     messages: [{
       role: 'user',
       content: {
         type: 'text',
-        text: `Create a presentation on "${topic}".\n1. Use search_papers to find relevant papers\n2. Select 5-8 papers and register with register_references\n3. Write 12-slide Marp markdown\n4. Save with save_output (type: ppt)`,
+        text: `Create a presentation on "${topic}".\n1. Call plan_task to set the goal\n2. Use search_papers to find relevant papers\n3. Select 5-8 papers and register with register_references\n4. Write 12-slide Marp markdown\n5. Save with save_output (type: ppt)`,
       },
     }],
   }),
@@ -162,14 +212,14 @@ server.prompt(
 
 server.prompt(
   'report',
-  'Write a report: search papers → register → write → save DOCX',
+  'Write a report: plan → search papers → register → write → save DOCX',
   { topic: z.string().describe('Report topic') },
   ({ topic }) => ({
     messages: [{
       role: 'user',
       content: {
         type: 'text',
-        text: `Write an academic report on "${topic}".\n1. Use search_papers to find relevant papers\n2. Select 5-8 papers and register with register_references\n3. Write full report markdown (intro, body, conclusion, references)\n4. Save with save_output (type: report)`,
+        text: `Write an academic report on "${topic}".\n1. Call plan_task to set the goal\n2. Use search_papers to find relevant papers\n3. Select 5-8 papers and register with register_references\n4. Write full report markdown (intro, body, conclusion, references)\n5. Save with save_output (type: report)`,
       },
     }],
   }),
@@ -222,9 +272,12 @@ server.prompt(
 // ─── 서버 시작 ─────────────────────────────────────────────────
 
 async function main() {
+  contextInjector.init();
+  stateManager.load();
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('uni-agent MCP server started (Thin MCP mode)');
+  console.error('uni-agent MCP server started (Fat MCP v3.0.0)');
 }
 
 main().catch((err) => {
