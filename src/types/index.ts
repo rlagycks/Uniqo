@@ -180,6 +180,32 @@ export interface CrossRefResponse {
   message: { items: CrossRefWork[] };
 }
 
+// ------ Fat MCP: 상태·Hook ------
+
+export type Persona = 'architect' | 'researcher' | 'worker' | 'reader';
+
+export interface Milestone {
+  name: string;
+  status: 'pending' | 'done' | 'failed';
+  completedAt?: string;
+  [key: string]: unknown;
+}
+
+export interface AgentState {
+  goal: string;
+  status: 'idle' | 'in_progress' | 'done' | 'failed';
+  startedAt: string;
+  milestones: Milestone[];
+  retryCount: number;
+  errors: string[];
+}
+
+export interface HookContext {
+  tool: string;
+  persona: Persona;
+  state: AgentState;
+}
+
 // ------ 포매터 입출력 ------
 
 export interface FormatterInput {
