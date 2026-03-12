@@ -10,6 +10,7 @@ import type { Draft } from '../types/index.js';
 import { wrapTool } from './hook.js';
 import { contextInjector } from './context-injector.js';
 import { stateManager } from './state.js';
+import { validateCitationKeys } from './citation-validator.js';
 
 const server = new McpServer({
   name: 'uni-agent',
@@ -118,6 +119,18 @@ server.tool(
     format: z.enum(['pdf', 'docx', 'md']).optional().describe('출력 형식 (기본: ppt→pdf, report→docx, notes→md)'),
   },
   wrapTool('save_output', async ({ content, output_type, title }) => {
+    // 인용키 검증: 미등록 키가 있으면 저장 차단
+    const validation = validateCitationKeys(content, referenceStore.getCitationKeys());
+    if (!validation.valid) {
+      return {
+        content: [{
+          type: 'text',
+          text: `인용키 검증 실패: 미등록 인용키 발견 [${validation.unregistered.join(', ')}]\n→ register_references로 먼저 등록하세요.`,
+        }],
+        isError: true,
+      };
+    }
+
     const draft: Draft = {
       outputType: output_type as OutputType,
       structure: [],
