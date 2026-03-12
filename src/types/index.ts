@@ -52,6 +52,8 @@ export interface PaperResult {
   doi?: string;
   source: 'semantic_scholar' | 'openalex' | 'crossref';
   url?: string;
+  citationCount?: number;  // 피인용 횟수 (Semantic Scholar 제공)
+  score?: number;          // 다차원 스코어 (0~1, scorePapers() 계산)
 }
 
 // ------ 작성 ------

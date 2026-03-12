@@ -18,7 +18,7 @@ export type { PaperResult };
  * 3개 API를 병렬 검색 후 중복 제거하여 반환.
  * 개별 API 실패는 무시하고 나머지 결과를 반환.
  */
-export async function searchAll(keywords: string[], _topic: string, limit: number): Promise<PaperResult[]> {
+export async function searchAll(keywords: string[], topic: string, limit: number): Promise<PaperResult[]> {
   const [ssResults, openAlexResults, crossRefResults] = await Promise.allSettled([
     searchSemanticScholar(keywords),
     searchOpenAlex(keywords),
@@ -31,7 +31,9 @@ export async function searchAll(keywords: string[], _topic: string, limit: numbe
     ...(crossRefResults.status === 'fulfilled' ? crossRefResults.value : []),
   ];
 
-  return deduplicatePapers(papers).slice(0, limit);
+  const deduped = deduplicatePapers(papers);
+  const scored = scorePapers(deduped, topic);
+  return scored.slice(0, limit);
 }
 
 export async function searchSemanticScholar(keywords: string[], limit = 20): Promise<PaperResult[]> {
@@ -101,6 +103,43 @@ export function deduplicatePapers(papers: PaperResult[]): PaperResult[] {
   });
 }
 
+/**
+ * 다차원 스코어링: recency×0.3 + citationNorm×0.5 + abstractMatch×0.2
+ * citationCount가 없는 논문은 배열 내 중앙값을 기본값으로 사용 (불이익 방지).
+ */
+export function scorePapers(papers: PaperResult[], query: string): PaperResult[] {
+  const currentYear = new Date().getFullYear();
+  const queryTokens = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+
+  const withCitations = papers.filter((p) => p.citationCount !== undefined);
+  const maxCitations =
+    withCitations.length > 0 ? Math.max(...withCitations.map((p) => p.citationCount!)) : 0;
+
+  const sortedCitations = withCitations.map((p) => p.citationCount!).sort((a, b) => a - b);
+  const medianCitation =
+    sortedCitations.length > 0 ? (sortedCitations[Math.floor(sortedCitations.length / 2)] ?? 0) : 0;
+
+  return papers
+    .map((paper) => {
+      const recency = paper.year > 0 ? Math.max(0, 1 - (currentYear - paper.year) / 30) : 0;
+
+      let citationNorm: number;
+      if (paper.citationCount !== undefined) {
+        citationNorm = maxCitations > 0 ? paper.citationCount / maxCitations : 0;
+      } else {
+        citationNorm = maxCitations > 0 ? medianCitation / maxCitations : 0.5;
+      }
+
+      const textToSearch = (paper.abstract ?? paper.title).toLowerCase();
+      const matchCount = queryTokens.filter((t) => textToSearch.includes(t)).length;
+      const abstractMatch = queryTokens.length > 0 ? matchCount / queryTokens.length : 0;
+
+      const score = recency * 0.3 + citationNorm * 0.5 + abstractMatch * 0.2;
+      return { ...paper, score };
+    })
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+}
+
 // ─── Private normalization helpers ───────────────────────────────
 
 function normalizeSS(p: SemanticScholarPaper): PaperResult {
@@ -111,6 +150,7 @@ function normalizeSS(p: SemanticScholarPaper): PaperResult {
     abstract: p.abstract,
     doi: p.externalIds?.DOI,
     source: 'semantic_scholar',
+    citationCount: p.citationCount,
   };
 }
 

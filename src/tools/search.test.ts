@@ -5,6 +5,7 @@ import {
   searchCrossRef,
   deduplicatePapers,
   searchAll,
+  scorePapers,
 } from './search.js';
 import type { PaperResult } from '../types/index.js';
 
@@ -203,6 +204,113 @@ describe('deduplicatePapers', () => {
 
   it('returns empty array for empty input', () => {
     expect(deduplicatePapers([])).toEqual([]);
+  });
+});
+
+// ─── scorePapers ───────────────────────────────────────────────
+
+describe('scorePapers', () => {
+  const currentYear = new Date().getFullYear();
+
+  it('최근 논문이 오래된 논문보다 높은 recency 점수를 받는다', () => {
+    const papers: PaperResult[] = [
+      { title: 'Old Paper', authors: [], year: 1990, source: 'semantic_scholar' },
+      { title: 'Recent Paper', authors: [], year: currentYear, source: 'semantic_scholar' },
+    ];
+    const result = scorePapers(papers, 'test');
+    expect(result[0]?.title).toBe('Recent Paper');
+  });
+
+  it('citationCount가 높은 논문이 높은 citation 점수를 받는다', () => {
+    const papers: PaperResult[] = [
+      { title: 'Low Cited', authors: [], year: currentYear, citationCount: 10, source: 'semantic_scholar' },
+      { title: 'High Cited', authors: [], year: currentYear, citationCount: 1000, source: 'semantic_scholar' },
+    ];
+    const result = scorePapers(papers, 'test');
+    expect(result[0]?.title).toBe('High Cited');
+  });
+
+  it('citationCount가 undefined인 논문에 중앙값 기본값이 적용된다', () => {
+    // 홀수 배열 [10, 100, 1000] → 중앙값(index 1) = 100
+    const papers: PaperResult[] = [
+      { title: 'No Citation', authors: [], year: currentYear, source: 'openalex' },
+      { title: 'Low Cited', authors: [], year: currentYear, citationCount: 10, source: 'semantic_scholar' },
+      { title: 'Mid Cited', authors: [], year: currentYear, citationCount: 100, source: 'semantic_scholar' },
+      { title: 'High Cited', authors: [], year: currentYear, citationCount: 1000, source: 'semantic_scholar' },
+    ];
+    const result = scorePapers(papers, 'test');
+    const noCitationScore = result.find((p) => p.title === 'No Citation')?.score ?? 0;
+    const midCitedScore = result.find((p) => p.title === 'Mid Cited')?.score ?? 0;
+    const highCitedScore = result.find((p) => p.title === 'High Cited')?.score ?? 0;
+    // 중앙값(100)이 기본값이므로 No Citation ≈ Mid Cited
+    expect(noCitationScore).toBeCloseTo(midCitedScore, 2);
+    expect(highCitedScore).toBeGreaterThan(noCitationScore);
+  });
+
+  it('abstract에 쿼리 키워드가 많이 포함된 논문이 높은 abstractMatch를 받는다', () => {
+    const papers: PaperResult[] = [
+      { title: 'A', authors: [], year: currentYear, abstract: 'nothing relevant here', source: 'openalex' },
+      { title: 'B', authors: [], year: currentYear, abstract: 'deep learning neural network', source: 'openalex' },
+    ];
+    const result = scorePapers(papers, 'deep learning');
+    expect(result[0]?.title).toBe('B');
+  });
+
+  it('abstract 없는 논문은 title로 abstractMatch를 계산한다', () => {
+    const papers: PaperResult[] = [
+      { title: 'Unrelated Title', authors: [], year: currentYear, source: 'crossref' },
+      { title: 'Deep Learning Survey', authors: [], year: currentYear, source: 'crossref' },
+    ];
+    const result = scorePapers(papers, 'deep learning');
+    expect(result[0]?.title).toBe('Deep Learning Survey');
+  });
+
+  it('모든 논문의 citationCount가 undefined이면 citationNorm이 0.5로 균등 처리된다', () => {
+    const papers: PaperResult[] = [
+      { title: 'A', authors: [], year: currentYear, source: 'openalex' },
+      { title: 'B', authors: [], year: currentYear, source: 'crossref' },
+    ];
+    const result = scorePapers(papers, 'test');
+    // citationNorm이 둘 다 0.5이므로 score 차이 없음 (동점)
+    expect(result[0]?.score).toBeCloseTo(result[1]?.score ?? 0, 5);
+  });
+
+  it('year가 0인 논문의 recency score는 0이다', () => {
+    const papers: PaperResult[] = [
+      { title: 'No Year', authors: [], year: 0, source: 'crossref' },
+    ];
+    const result = scorePapers(papers, 'test');
+    const recencyContrib = (result[0]?.score ?? 0) - 0.5 * 0.5; // citationNorm=0.5
+    expect(recencyContrib).toBeLessThanOrEqual(0.001);
+  });
+
+  it('결과가 score 내림차순으로 정렬된다', () => {
+    const papers: PaperResult[] = [
+      { title: 'Old Low', authors: [], year: 1990, citationCount: 1, source: 'semantic_scholar' },
+      { title: 'New High', authors: [], year: currentYear, citationCount: 500, source: 'semantic_scholar' },
+      { title: 'Mid', authors: [], year: 2010, citationCount: 100, source: 'semantic_scholar' },
+    ];
+    const result = scorePapers(papers, 'test');
+    for (let i = 0; i < result.length - 1; i++) {
+      expect((result[i]?.score ?? 0)).toBeGreaterThanOrEqual(result[i + 1]?.score ?? 0);
+    }
+  });
+
+  it('searchAll 반환 결과에 score 필드가 포함된다', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [{ paperId: '1', title: 'Scored Paper', authors: [], year: currentYear, externalIds: {}, citationCount: 50 }],
+        total: 1, offset: 0,
+      }),
+    });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ results: [], meta: { count: 0 } }) });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ message: { items: [] } }) });
+
+    const results = await searchAll(['test'], 'test', 10);
+    expect(results[0]?.score).toBeDefined();
+    expect(results[0]?.score).toBeGreaterThanOrEqual(0);
+    expect(results[0]?.score).toBeLessThanOrEqual(1);
   });
 });
 
