@@ -1,15 +1,19 @@
 import { contextInjector } from '../context-injector.js';
 import { getPersona } from '../role-router.js';
 import { stateManager } from '../state.js';
+import { referenceStore } from '../../reference/store.js';
 import type { Persona } from '../../types/index.js';
 
 // Private IP 대역 차단 (SSRF 방지)
 const PRIVATE_IP_RE =
   /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i;
 
+const MAX_REF_IDS_IN_BLOCK = 20;
+
 export interface PreHookResult {
   contextNote: string;
   persona: Persona;
+  stateBlock: string;
 }
 
 export async function preHook(
@@ -43,5 +47,25 @@ export async function preHook(
   // 6. 마일스톤 추가
   stateManager.addMilestone(toolName);
 
-  return { contextNote, persona };
+  // 7. 상태 블록 생성 (goal이 설정된 경우에만)
+  const state = stateManager.getState();
+  let stateBlock = '';
+  if (state.goal) {
+    const allRefIds = referenceStore.list().map((r) => r.id);
+    const recentRefIds = allRefIds.slice(-MAX_REF_IDS_IN_BLOCK);
+    stateBlock = JSON.stringify({
+      sessionState: {
+        goal: state.goal,
+        status: state.status,
+        completedMilestones: state.milestones.filter((m) => m.status === 'done').map((m) => m.name),
+        pendingMilestones: state.milestones.filter((m) => m.status === 'pending').map((m) => m.name),
+        failedMilestones: state.milestones.filter((m) => m.status === 'failed').map((m) => m.name),
+        registeredRefIds: recentRefIds,
+        totalRefs: allRefIds.length,
+        retryCount: state.retryCount,
+      },
+    });
+  }
+
+  return { contextNote, persona, stateBlock };
 }

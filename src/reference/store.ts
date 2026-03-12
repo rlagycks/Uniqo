@@ -274,6 +274,11 @@ export class ReferenceStore {
     return entry;
   }
 
+  getCitationKeys(): Set<string> {
+    this.load();
+    return new Set(this.citationKeys);
+  }
+
   get(refId: string): ReferenceEntry | null {
     this.load();
     return this.index.entries.find((e) => e.id === refId) ?? null;
